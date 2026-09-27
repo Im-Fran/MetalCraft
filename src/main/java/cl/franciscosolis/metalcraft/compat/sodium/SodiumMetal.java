@@ -4,6 +4,7 @@ import cl.franciscosolis.metalcraft.MetalCraft;
 import cl.franciscosolis.metalcraft.device.MetalPipeline;
 import cl.franciscosolis.metalcraft.device.MetalSampler;
 import cl.franciscosolis.metalcraft.device.MetalTextureView;
+import cl.franciscosolis.metalcraft.device.UploadRing;
 import cl.franciscosolis.metalcraft.mtl.Mtl;
 import cl.franciscosolis.metalcraft.shader.ShaderTranslator;
 import com.mojang.blaze3d.pipeline.BlendFunction;
@@ -102,10 +103,9 @@ public final class SodiumMetal {
             return;
         }
         requireNoPass("glBufferSubData");
-        long staging = Mtl.newBuffer(length);
-        MemoryUtil.memCopy(data, Mtl.bufferContents(staging), length);
-        Mtl.copyBuffer(staging, 0, b.mtl, offset, length);
-        Mtl.release(staging);
+        UploadRing.Slice staging = UploadRing.reserve(length);
+        MemoryUtil.memCopy(data, staging.address(), length);
+        Mtl.copyBuffer(staging.buffer(), staging.offset(), b.mtl, offset, length);
     }
 
     public static void copy(int src, int dst, long readOffset, long writeOffset, long length) {

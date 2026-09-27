@@ -66,12 +66,24 @@ static void endBlit() {
     if (gBlit) { [gBlit endEncoding]; gBlit = nil; }
 }
 
+// Render encoders outlive Blaze3D render passes: a following pass on the same attachments without clears reuses the
+// open encoder instead of storing and reloading the whole target (expensive on Apple's tile-based GPUs).
+static bool gInPass;
+static id<MTLTexture> gPassColor, gPassDepth;
+
+static void endRender() {
+    if (gRender) { [gRender endEncoding]; gRender = nil; }
+    gPassColor = gPassDepth = nil;
+}
+
 static id<MTLBlitCommandEncoder> blit() {
+    endRender();
     if (!gBlit) gBlit = [cmd() blitCommandEncoder];
     return gBlit;
 }
 
 static void commit() {
+    endRender();
     endBlit();
     [cmd() encodeSignalEvent:gEvent value:++gEventValue];
     [gCmd commit];
@@ -356,9 +368,22 @@ JNIEXPORT jlong JNICALL Java_cl_franciscosolis_metalcraft_mtl_Mtl_newDepthStenci
 
 // ---- Render passes ----------------------------------------------------------
 
+/** Views of the same texture level are the same attachment even though Blaze3D hands out distinct view objects. */
+static bool sameAttachment(id<MTLTexture> a, id<MTLTexture> b) {
+    if (a == b) return true;
+    if (!a || !b) return false;
+    return (a.parentTexture ?: a) == (b.parentTexture ?: b) && a.parentRelativeLevel == b.parentRelativeLevel;
+}
+
 JNIEXPORT void JNICALL Java_cl_franciscosolis_metalcraft_mtl_Mtl_beginPass(JNIEnv*, jclass, jlong color, jboolean clearColor, jfloat r, jfloat g, jfloat b, jfloat a,
         jlong depth, jboolean clearDepth, jdouble depthValue) {
+    id<MTLTexture> colorView = OBJ(id<MTLTexture>, color), depthView = OBJ(id<MTLTexture>, depth);
+    gInPass = true;
+    if (gRender && !clearColor && !clearDepth && sameAttachment(colorView, gPassColor) && sameAttachment(depthView, gPassDepth)) return;
+    endRender();
     endBlit();
+    gPassColor = colorView;
+    gPassDepth = depthView;
     MTLRenderPassDescriptor* d = [MTLRenderPassDescriptor renderPassDescriptor];
     id<MTLTexture> colorTex = OBJ(id<MTLTexture>, color);
     if (colorTex) {
@@ -379,8 +404,7 @@ JNIEXPORT void JNICALL Java_cl_franciscosolis_metalcraft_mtl_Mtl_beginPass(JNIEn
 }
 
 JNIEXPORT void JNICALL Java_cl_franciscosolis_metalcraft_mtl_Mtl_endPass(JNIEnv*, jclass) {
-    [gRender endEncoding];
-    gRender = nil;
+    gInPass = false;  // The encoder stays open for a possible merge; endRender() closes it when anything else needs the command buffer.
 }
 
 JNIEXPORT void JNICALL Java_cl_franciscosolis_metalcraft_mtl_Mtl_setPipelineState(JNIEnv*, jclass, jlong pso, jlong depthState, jint cull, jboolean wireframe, jfloat depthBiasConstant, jfloat depthBiasSlope) {
@@ -499,14 +523,12 @@ static void stub_glGetIntegerv(GLenum pname, int* data) {
 }
 static GLenum stub_glGetError() { return 0; }
 static void* stub_glFenceSync(GLenum, unsigned) {
-    // Mid-pass there's nothing to submit yet; the fence then completes with the next commit.
-    if (gRender) return (void*)(uintptr_t)(gEventValue + 1);
-    commit();
-    return (void*)(uintptr_t)gEventValue;
+    return (void*)(uintptr_t)(gEventValue + 1);  // Completes with the next commit; see Mtl.fence.
 }
 static GLenum stub_glClientWaitSync(void* sync, unsigned, uint64_t timeoutNs) {
     uint64_t value = (uint64_t)(uintptr_t)sync;
     if (gEvent.signaledValue >= value) return 0x911A;  // GL_ALREADY_SIGNALED
+    if (value > gEventValue && !gInPass) commit();     // Waiting on work that hasn't been submitted yet.
     if (timeoutNs == 0) return 0x911B;                 // GL_TIMEOUT_EXPIRED
     uint64_t ms = timeoutNs / 1000000 + 1;
     return [gEvent waitUntilSignaledValue:value timeoutMS:ms] ? 0x911C : 0x911B;  // GL_CONDITION_SATISFIED
@@ -537,6 +559,7 @@ JNIEXPORT jlong JNICALL Java_cl_franciscosolis_metalcraft_mtl_Mtl_glStubAddress(
 
 JNIEXPORT void JNICALL Java_cl_franciscosolis_metalcraft_mtl_Mtl_present(JNIEnv*, jclass, jlong texture) {
     @autoreleasepool {
+        endRender();
         endBlit();
         id<MTLTexture> tex = OBJ(id<MTLTexture>, texture);
         CGSize size = CGSizeMake(tex.width, tex.height);
@@ -570,17 +593,23 @@ JNIEXPORT void JNICALL Java_cl_franciscosolis_metalcraft_mtl_Mtl_present(JNIEnv*
     }
 }
 
-/** Submits all recorded work and returns a value that fenceReached/fenceWait can test. */
+/**
+ * A fence covering everything recorded so far. It doesn't submit: it's the value the next commit will signal, so
+ * Minecraft's many fences per frame cost one command buffer. Waiting on a not-yet-submitted fence submits first.
+ */
 JNIEXPORT jlong JNICALL Java_cl_franciscosolis_metalcraft_mtl_Mtl_fence(JNIEnv*, jclass) {
-    @autoreleasepool {
-        commit();
-        return (jlong)gEventValue;
-    }
+    return (jlong)(gEventValue + 1);
+}
+
+/** Highest fence value the GPU has finished; never submits. */
+JNIEXPORT jlong JNICALL Java_cl_franciscosolis_metalcraft_mtl_Mtl_completedFence(JNIEnv*, jclass) {
+    return (jlong)gEvent.signaledValue;
 }
 
 JNIEXPORT jboolean JNICALL Java_cl_franciscosolis_metalcraft_mtl_Mtl_fenceWait(JNIEnv*, jclass, jlong value, jlong timeoutMs) {
     if (gEvent.signaledValue >= (uint64_t)value) return JNI_TRUE;
     if (timeoutMs <= 0) return JNI_FALSE;
+    if ((uint64_t)value > gEventValue && !gInPass) @autoreleasepool { commit(); }
     return [gEvent waitUntilSignaledValue:(uint64_t)value timeoutMS:(uint64_t)MIN(timeoutMs, (jlong)UINT32_MAX)];
 }
 

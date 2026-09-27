@@ -56,5 +56,6 @@ public final class Mtl {
 
     public static native void present(long texture);
     public static native long fence();
+    public static native long completedFence();
     public static native boolean fenceWait(long value, long timeoutMs);
 }

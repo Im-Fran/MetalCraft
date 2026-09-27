@@ -98,17 +98,9 @@ public class MetalCommandEncoder implements CommandEncoder {
         assertNoRenderPass();
         int length = data.remaining();
         if (length > slice.length()) throw new IllegalArgumentException("Cannot write more data than the slice allows (attempting to write " + length + " bytes into a slice of length " + slice.length() + ")");
-        long staging = stage(MemoryUtil.memAddress(data), length);
-        Mtl.copyBuffer(staging, 0, ((MetalBuffer) slice.buffer()).handle, slice.offset(), length);
-        Mtl.release(staging);
-    }
-
-    /** Copies bytes into a fresh shared buffer for a blit. The caller releases it right after encoding; the command buffer keeps it alive. */
-    // ponytail: one MTLBuffer per upload; a per-frame upload ring is the upgrade if allocation shows up in profiles.
-    private static long stage(long address, long length) {
-        long staging = Mtl.newBuffer(length);
-        MemoryUtil.memCopy(address, Mtl.bufferContents(staging), length);
-        return staging;
+        UploadRing.Slice staging = UploadRing.reserve(length);
+        MemoryUtil.memCopy(MemoryUtil.memAddress(data), staging.address(), length);
+        Mtl.copyBuffer(staging.buffer(), staging.offset(), ((MetalBuffer) slice.buffer()).handle, slice.offset(), length);
     }
 
     @Override
@@ -179,8 +171,8 @@ public class MetalCommandEncoder implements CommandEncoder {
         if (mip >= ((MetalTexture) texture).metalMips || w == 0 || h == 0) return;
         int dstComps = texture.getFormat().pixelSize();
         int rowBytes = w * dstComps;
-        long staging = Mtl.newBuffer((long) rowBytes * h);
-        long dst = Mtl.bufferContents(staging);
+        UploadRing.Slice staging = UploadRing.reserve((long) rowBytes * h);
+        long dst = staging.address();
         for (int row = 0; row < h; row++) {
             long s = src + row * srcStride, d = dst + (long) row * rowBytes;
             if (srcComps == dstComps) {
@@ -195,8 +187,7 @@ public class MetalCommandEncoder implements CommandEncoder {
             }
         }
         int slice = (texture.usage() & GpuTexture.USAGE_CUBEMAP_COMPATIBLE) != 0 ? layer % 6 : 0;
-        Mtl.copyBufferToTexture(staging, 0, rowBytes, handle(texture), slice, mip, x, y, w, h);
-        Mtl.release(staging);
+        Mtl.copyBufferToTexture(staging.buffer(), staging.offset(), rowBytes, handle(texture), slice, mip, x, y, w, h);
     }
 
     @Override

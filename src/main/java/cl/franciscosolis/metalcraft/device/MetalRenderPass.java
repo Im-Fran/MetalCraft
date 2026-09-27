@@ -165,7 +165,6 @@ public class MetalRenderPass implements RenderPass {
     }
 
     /** Binds pipeline state and every resource the pipeline's shaders reference. Returns false (skip the draw) for invalid pipelines, like GL does. */
-    // ponytail: rebinds all resources per draw; track dirty names if JNI call count shows up in profiles.
     private boolean setup() {
         if (pipeline == null || !pipeline.isValid()) return false;
         if (pipeline != boundPipeline) {
@@ -205,19 +204,40 @@ public class MetalRenderPass implements RenderPass {
         for (var e : stage.buffers().entrySet()) {
             GpuBufferSlice slice = uniforms.get(e.getKey());
             // Stale bindings to buffers Minecraft has since closed are harmless in GL but dangling pointers in Metal.
-            if (slice != null && !slice.buffer().isClosed()) Mtl.setBuffer(fragment, e.getValue(), ((MetalBuffer) slice.buffer()).handle, slice.offset());
+            if (slice != null && !slice.buffer().isClosed()) bindBuffer(fragment, e.getValue(), ((MetalBuffer) slice.buffer()).handle, slice.offset());
         }
         for (var e : stage.textures().entrySet()) {
             String name = e.getKey();
             Binding binding = samplers.get(name);
             if (binding != null && !binding.view.isClosed() && !binding.sampler.isClosed()) {
-                Mtl.setTexture(fragment, e.getValue(), binding.view.handle, stage.samplers().getOrDefault(name, -1), binding.sampler.handle);
+                bindTexture(fragment, e.getValue(), binding.view.handle, stage.samplers().getOrDefault(name, -1), binding.sampler.handle);
                 continue;
             }
             GpuBufferSlice texel = uniforms.get(name);
             TextureFormat format = texel != null ? pipeline.texelFormat(name) : null;
-            if (format != null && !texel.buffer().isClosed()) Mtl.setTexture(fragment, e.getValue(), ((MetalBuffer) texel.buffer()).texelView(format), -1, 0);
+            if (format != null && !texel.buffer().isClosed()) bindTexture(fragment, e.getValue(), ((MetalBuffer) texel.buffer()).texelView(format), -1, 0);
         }
+    }
+
+    // What this pass has bound per [stage][index], so unchanged resources skip the JNI call. A merged encoder may
+    // still hold older bindings, which is fine: starting empty only means rebinding once.
+    private final long[][] boundBuffers = new long[2][32], boundOffsets = new long[2][32];
+    private final long[][] boundTextures = new long[2][32], boundSamplers = new long[2][32];
+
+    private void bindBuffer(boolean fragment, int index, long buffer, long offset) {
+        int s = fragment ? 1 : 0;
+        if (boundBuffers[s][index] == buffer && boundOffsets[s][index] == offset) return;
+        boundBuffers[s][index] = buffer;
+        boundOffsets[s][index] = offset;
+        Mtl.setBuffer(fragment, index, buffer, offset);
+    }
+
+    private void bindTexture(boolean fragment, int index, long texture, int samplerIndex, long sampler) {
+        int s = fragment ? 1 : 0;
+        if (boundTextures[s][index] == texture && (samplerIndex < 0 || boundSamplers[s][samplerIndex] == sampler)) return;
+        boundTextures[s][index] = texture;
+        if (samplerIndex >= 0) boundSamplers[s][samplerIndex] = sampler;
+        Mtl.setTexture(fragment, index, texture, samplerIndex, sampler);
     }
 
     private void checkOpen() {
