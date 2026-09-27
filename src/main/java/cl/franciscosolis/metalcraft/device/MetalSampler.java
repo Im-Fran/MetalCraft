@@ -25,6 +25,11 @@ public class MetalSampler extends GpuSampler {
                 maxAnisotropy, maxLod.isPresent() ? (float) maxLod.getAsDouble() : -1f);
     }
 
+    /** The retained Metal object, for code outside the device package that encodes directly (compat shims). */
+    public long handle() {
+        return handle;
+    }
+
     boolean isClosed() {
         return closed;
     }

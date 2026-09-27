@@ -1,0 +1,30 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "cl.franciscosolis.metalcraft.mixin.sodium",
+  "plugin": "cl.franciscosolis.metalcraft.mixin.sodium.SodiumMixinPlugin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "DefaultShaderInterfaceMixin",
+    "GLRenderDeviceAccessor",
+    "GlAbstractTessellationAccessor",
+    "GlObjectHandlesMixin",
+    "GlProgramBuilderMixin",
+    "GlProgramMixin",
+    "GlShaderMixin",
+    "GlUniformsMixin$Block",
+    "GlUniformsMixin$Float1",
+    "GlUniformsMixin$Float2",
+    "GlUniformsMixin$Float3",
+    "GlUniformsMixin$Float4",
+    "GlUniformsMixin$Int",
+    "GlUniformsMixin$Matrix4",
+    "GlVertexArrayMixin",
+    "ImmediateCommandListMixin",
+    "ImmediateDrawCommandListMixin",
+    "ShaderChunkRendererMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

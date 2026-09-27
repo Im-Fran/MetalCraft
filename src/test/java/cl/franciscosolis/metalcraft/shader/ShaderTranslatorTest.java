@@ -66,6 +66,34 @@ class ShaderTranslatorTest {
         for (var e : fs.inputs().entrySet()) assertEquals(vs.outputs().get(e.getKey()), e.getValue(), "varying " + e.getKey());
     }
 
+    @Test
+    void translatesSodiumChunkShaders() throws Exception {
+        NativeLoader.load();
+        // Mirrors Sodium's ShaderChunkRenderer: bound attribute locations and the defines it compiles with.
+        Map<String, Integer> attributes = Map.of("a_Position", 0, "a_Color", 1, "a_TexCoord", 2, "a_LightAndData", 3);
+        String defines = "#define USE_VERTEX_COMPRESSION\n#define USE_FOG\n#define USE_FRAGMENT_DISCARD\n";
+        ShaderTranslator.Result vs = ShaderTranslator.translate("sodium.vsh", sodium("blocks/block_layer_opaque.vsh", defines), Stage.VERTEX, attributes);
+        ShaderTranslator.Result fs = ShaderTranslator.translate("sodium.fsh", sodium("blocks/block_layer_opaque.fsh", defines), Stage.FRAGMENT, vs.outputs());
+        Mtl.release(Mtl.newLibrary(vs.msl()));
+        Mtl.release(Mtl.newLibrary(fs.msl()));
+
+        assertEquals(attributes, vs.inputs());
+        assertTrue(vs.defaults().keySet().containsAll(Set.of("u_ModelViewMatrix", "u_ProjectionMatrix", "u_RegionOffset", "u_CurrentTime")), vs.defaults().toString());
+        assertTrue(fs.defaults().keySet().containsAll(Set.of("u_FogColor", "u_TexelSize", "u_UseRGSS")), fs.defaults().toString());
+        assertTrue(vs.buffers().containsKey(ShaderTranslator.DEFAULT_BLOCK) && vs.buffers().containsKey("ChunkData"), vs.buffers().toString());
+        assertTrue(fs.samplers().containsKey("u_BlockTex") && vs.samplers().containsKey("u_LightTex"));
+    }
+
+    private static final Pattern SODIUM_IMPORT = Pattern.compile("^#import <sodium:(.+)>$", Pattern.MULTILINE);
+
+    private static String sodium(String name, String defines) throws IOException {
+        String src = read("/assets/sodium/shaders/" + name);
+        Matcher m = SODIUM_IMPORT.matcher(src);
+        StringBuilder sb = new StringBuilder();
+        while (m.find()) m.appendReplacement(sb, Matcher.quoteReplacement(read("/assets/sodium/shaders/" + m.group(1))));
+        return m.appendTail(sb).toString().replaceFirst("(#version [^\\n]*\\n)", "$1" + defines);
+    }
+
     // Defines normally supplied by the RenderPipeline.
     private static final Map<String, String> DEFINES = Map.of("core/rendertype_end_portal.fsh", "#define PORTAL_LAYERS 15\n");
 

@@ -6,6 +6,8 @@ import static org.lwjgl.util.spvc.Spvc.*;
 import java.nio.ByteBuffer;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.lwjgl.PointerBuffer;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.util.spvc.SpvcReflectedResource;
@@ -21,7 +23,7 @@ public final class ShaderTranslator {
     /** Metal buffer index used for the vertex stream; stays clear of the automatically assigned UBO indices. */
     public static final int VERTEX_BUFFER_INDEX = 30;
 
-    private static final java.util.regex.Pattern MSL_RESERVED = java.util.regex.Pattern.compile("\\b(sampler)\\b");
+    private static final Pattern MSL_RESERVED = Pattern.compile("\\b(sampler)\\b");
     private static final int SPV_DECORATION_LOCATION = 30;
     private static final int MSL_VERSION_2_4 = 20400;
 
@@ -36,9 +38,18 @@ public final class ShaderTranslator {
      * @param samplers     sampler name -> [[sampler(n)]] (absent for texel buffers)
      * @param inputs       stage input name -> location (vertex: attribute index)
      * @param outputs      stage output name -> location
+     * @param defaults     loose (default-block) uniform name -> byte offset inside the {@link #DEFAULT_BLOCK} buffer
+     * @param defaultsSize size in bytes of the {@link #DEFAULT_BLOCK} buffer (0 if the stage has no loose uniforms)
      */
     public record Result(String msl, String entryPoint, Map<String, Integer> buffers, Map<String, Integer> textures,
-                         Map<String, Integer> samplers, Map<String, Integer> inputs, Map<String, Integer> outputs) {}
+                         Map<String, Integer> samplers, Map<String, Integer> inputs, Map<String, Integer> outputs,
+                         Map<String, Integer> defaults, int defaultsSize) {}
+
+    /** Loose uniforms (`uniform vec3 foo;`) have no Metal equivalent; they're gathered into this std140 block. */
+    public static final String DEFAULT_BLOCK = "MetalCraftDefaults";
+    private static final Pattern LOOSE_UNIFORM = Pattern.compile(
+            "^\\s*uniform\\s+((?:[biu]?vec[234])|(?:mat[234])|bool|int|uint|float)\\s+(\\w+)\\s*;.*$", Pattern.MULTILINE);
+    private static final Pattern VERSION = Pattern.compile("^#version[^\\n]*\\n", Pattern.MULTILINE);
 
     public static final class TranslationException extends Exception {
         public TranslationException(String message) {
@@ -52,12 +63,28 @@ public final class ShaderTranslator {
      */
     public static Result translate(String name, String glsl, Stage stage, Map<String, Integer> inputLocations) throws TranslationException {
         // ponytail: `sampler` is a legal GLSL identifier but a type in MSL, and SPIRV-Cross keeps the name. Extend if other clashes show up.
-        ByteBuffer spirv = compileSpirv(name, MSL_RESERVED.matcher(glsl).replaceAll("$1_"), stage);
+        ByteBuffer spirv = compileSpirv(name, gatherLooseUniforms(MSL_RESERVED.matcher(glsl).replaceAll("$1_")), stage);
         try {
             return toMsl(name, spirv, stage, inputLocations);
         } finally {
             org.lwjgl.system.MemoryUtil.memFree(spirv);
         }
+    }
+
+    /** Moves loose uniforms into a {@link #DEFAULT_BLOCK} uniform block; members keep their names, so shader code is unchanged. */
+    static String gatherLooseUniforms(String glsl) {
+        Matcher m = LOOSE_UNIFORM.matcher(glsl);
+        StringBuilder members = new StringBuilder();
+        StringBuilder rest = new StringBuilder();
+        while (m.find()) {
+            members.append("    ").append(m.group(1)).append(' ').append(m.group(2)).append(";\n");
+            m.appendReplacement(rest, "");
+        }
+        if (members.isEmpty()) return glsl;
+        m.appendTail(rest);
+        String block = "layout(std140) uniform " + DEFAULT_BLOCK + " {\n" + members + "};\n";
+        Matcher v = VERSION.matcher(rest);
+        return v.find() ? rest.insert(v.end(), block).toString() : block + rest;
     }
 
     private static ByteBuffer compileSpirv(String name, String glsl, Stage stage) throws TranslationException {
@@ -139,9 +166,24 @@ public final class ShaderTranslator {
                 forEach(resources, SPVC_RESOURCE_TYPE_SEPARATE_IMAGE, stack,
                         r -> putBinding(textures, r.nameString(), spvc_compiler_msl_get_automatic_resource_binding(compiler, r.id())));
 
+                Map<String, Integer> defaults = new HashMap<>();
+                int[] defaultsSize = {0};
+                forEach(resources, SPVC_RESOURCE_TYPE_UNIFORM_BUFFER, stack, r -> {
+                    if (!DEFAULT_BLOCK.equals(blockName(compiler, r))) return;
+                    long type = spvc_compiler_get_type_handle(compiler, r.base_type_id());
+                    var offset = stack.mallocInt(1);
+                    for (int i = 0; i < spvc_type_get_num_member_types(type); i++) {
+                        spvc_compiler_type_struct_member_offset(compiler, type, i, offset);
+                        defaults.put(spvc_compiler_get_member_name(compiler, r.base_type_id(), i), offset.get(0));
+                    }
+                    var size = stack.mallocPointer(1);
+                    spvc_compiler_get_declared_struct_size(compiler, type, size);
+                    defaultsSize[0] = (int) ((size.get(0) + 15) & ~15L);  // MSL pads structs to their 16-byte alignment
+                });
+
                 String entry = spvc_compiler_get_cleansed_entry_point_name(compiler, "main",
                         stage == Stage.VERTEX ? 0 /* SpvExecutionModelVertex */ : 4 /* SpvExecutionModelFragment */);
-                return new Result(msl, entry, buffers, textures, samplers, inputs, outputs);
+                return new Result(msl, entry, buffers, textures, samplers, inputs, outputs, defaults, defaultsSize[0]);
             } finally {
                 spvc_context_destroy(ctx);
             }

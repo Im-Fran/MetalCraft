@@ -148,7 +148,7 @@ public class MetalPipeline implements CompiledRenderPipeline {
         Mtl.release(depthState);
     }
 
-    private static int compare(DepthTestFunction f) {
+    public static int compare(DepthTestFunction f) {
         return switch (f) {
             case NO_DEPTH_TEST -> Mtl.COMPARE_ALWAYS;
             case EQUAL_DEPTH_TEST -> Mtl.COMPARE_EQUAL;
@@ -170,7 +170,7 @@ public class MetalPipeline implements CompiledRenderPipeline {
     }
 
     /** SourceFactor and DestFactor share constant names; map both to MTLBlendFactor. */
-    private static int blendFactor(String name) {
+    public static int blendFactor(String name) {
         return switch (name) {
             case "ZERO" -> 0;
             case "ONE" -> 1;

@@ -21,9 +21,13 @@
     "fabric-api": "*"
   },
   "breaks": {
-    "sodium": "*"
+    "sodium": [
+      "<0.8.14",
+      ">=0.9.0-"
+    ]
   },
   "mixins": [
-    "metalcraft.mixins.json"
+    "metalcraft.mixins.json",
+    "metalcraft.sodium.mixins.json"
   ]
 }

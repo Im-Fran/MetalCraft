@@ -2,11 +2,13 @@ package cl.franciscosolis.metalcraft.mixin;
 
 import cl.franciscosolis.metalcraft.MetalCraft;
 import cl.franciscosolis.metalcraft.NativeLoader;
+import cl.franciscosolis.metalcraft.compat.sodium.SodiumMetal;
 import cl.franciscosolis.metalcraft.device.MetalDevice;
 import com.mojang.blaze3d.shaders.ShaderSource;
 import com.mojang.blaze3d.systems.GpuDevice;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.systems.SamplerCache;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.renderer.DynamicUniforms;
 import org.lwjgl.glfw.GLFW;
 import org.spongepowered.asm.mixin.Mixin;
@@ -32,6 +34,7 @@ abstract class RenderSystemMixin {
         apiDescription = DEVICE.getImplementationInformation();
         dynamicUniforms = new DynamicUniforms();
         samplerCache.initialize();
+        if (FabricLoader.getInstance().isModLoaded("sodium")) SodiumMetal.installGlStubs();
         ci.cancel();
     }
 

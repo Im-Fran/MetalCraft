@@ -6,6 +6,7 @@
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
 #include <mutex>
+#include <string>
 #include "cl_franciscosolis_metalcraft_mtl_Mtl.h"
 
 #define RETAIN(obj) ((jlong)(__bridge_retained void*)(obj))
@@ -448,6 +449,88 @@ JNIEXPORT void JNICALL Java_cl_franciscosolis_metalcraft_mtl_Mtl_clearRegion(JNI
         [gRender drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
         Java_cl_franciscosolis_metalcraft_mtl_Mtl_endPass(env, nullptr);
     }
+}
+
+JNIEXPORT void JNICALL Java_cl_franciscosolis_metalcraft_mtl_Mtl_setBytes(JNIEnv*, jclass, jboolean fragment, jint index, jlong address, jint length) {
+    if (fragment) [gRender setFragmentBytes:(const void*)address length:length atIndex:index];
+    else [gRender setVertexBytes:(const void*)address length:length atIndex:index];
+}
+
+/** glMultiDrawElementsBaseVertex over raw arrays (counts: uint32, offsets: pointer-sized byte offsets, baseVertices: int32). */
+JNIEXPORT void JNICALL Java_cl_franciscosolis_metalcraft_mtl_Mtl_multiDrawIndexed(JNIEnv*, jclass, jint primitive, jboolean uint32, jlong indexBuffer,
+        jlong counts, jlong offsets, jlong baseVertices, jint drawCount) {
+    id<MTLBuffer> ib = OBJ(id<MTLBuffer>, indexBuffer);
+    const uint32_t* c = (const uint32_t*)counts;
+    const uintptr_t* o = (const uintptr_t*)offsets;
+    const int32_t* b = (const int32_t*)baseVertices;
+    MTLIndexType type = uint32 ? MTLIndexTypeUInt32 : MTLIndexTypeUInt16;
+    for (jint i = 0; i < drawCount; i++) {
+        if (c[i] == 0) continue;
+        [gRender drawIndexedPrimitives:(MTLPrimitiveType)primitive indexCount:c[i] indexType:type indexBuffer:ib indexBufferOffset:o[i]
+                         instanceCount:1 baseVertex:b[i] baseInstance:0];
+    }
+}
+
+// ---- Minimal OpenGL entry points ---------------------------------------------
+// Some mods call GL directly from places a mixin can't reach (e.g. Sodium's own mixin handlers). These stubs back an
+// LWJGL FunctionProvider so those calls work (sync objects map onto the MTLSharedEvent timeline) and every other GL
+// function resolves to NULL, which LWJGL reports as a clear error instead of a crash.
+
+typedef unsigned int GLenum;
+static std::string gGlRenderer;
+
+static const unsigned char* stub_glGetString(GLenum name) {
+    switch (name) {
+        case 0x1F00: return (const unsigned char*)"Apple";                  // GL_VENDOR
+        case 0x1F01: return (const unsigned char*)gGlRenderer.c_str();      // GL_RENDERER
+        case 0x1F02: return (const unsigned char*)"4.1 MetalCraft (Metal)"; // GL_VERSION
+        case 0x8B8C: return (const unsigned char*)"4.10";                   // GL_SHADING_LANGUAGE_VERSION
+        default: return nullptr;
+    }
+}
+static const unsigned char* stub_glGetStringi(GLenum, unsigned) { return nullptr; }
+static void stub_glGetIntegerv(GLenum pname, int* data) {
+    switch (pname) {
+        case 0x821B: *data = 4; break;  // GL_MAJOR_VERSION
+        case 0x821C: *data = 1; break;  // GL_MINOR_VERSION
+        case 0x9126: *data = 1; break;  // GL_CONTEXT_PROFILE_MASK: core
+        default: *data = 0;
+    }
+}
+static GLenum stub_glGetError() { return 0; }
+static void* stub_glFenceSync(GLenum, unsigned) {
+    // Mid-pass there's nothing to submit yet; the fence then completes with the next commit.
+    if (gRender) return (void*)(uintptr_t)(gEventValue + 1);
+    commit();
+    return (void*)(uintptr_t)gEventValue;
+}
+static GLenum stub_glClientWaitSync(void* sync, unsigned, uint64_t timeoutNs) {
+    uint64_t value = (uint64_t)(uintptr_t)sync;
+    if (gEvent.signaledValue >= value) return 0x911A;  // GL_ALREADY_SIGNALED
+    if (timeoutNs == 0) return 0x911B;                 // GL_TIMEOUT_EXPIRED
+    uint64_t ms = timeoutNs / 1000000 + 1;
+    return [gEvent waitUntilSignaledValue:value timeoutMS:ms] ? 0x911C : 0x911B;  // GL_CONDITION_SATISFIED
+}
+static void stub_glGetSynciv(void* sync, GLenum, int, int* length, int* values) {
+    if (length) *length = 1;
+    values[0] = gEvent.signaledValue >= (uint64_t)(uintptr_t)sync ? 0x9119 : 0x9118;  // GL_SIGNALED : GL_UNSIGNALED
+}
+static void stub_glDeleteSync(void*) {}
+
+JNIEXPORT jlong JNICALL Java_cl_franciscosolis_metalcraft_mtl_Mtl_glStubAddress(JNIEnv* env, jclass, jstring name) {
+    const char* n = env->GetStringUTFChars(name, nullptr);
+    void* fn = nullptr;
+    if (!strcmp(n, "glGetString")) fn = (void*)stub_glGetString;
+    else if (!strcmp(n, "glGetStringi")) fn = (void*)stub_glGetStringi;
+    else if (!strcmp(n, "glGetIntegerv")) fn = (void*)stub_glGetIntegerv;
+    else if (!strcmp(n, "glGetError")) fn = (void*)stub_glGetError;
+    else if (!strcmp(n, "glFenceSync")) fn = (void*)stub_glFenceSync;
+    else if (!strcmp(n, "glClientWaitSync")) fn = (void*)stub_glClientWaitSync;
+    else if (!strcmp(n, "glGetSynciv")) fn = (void*)stub_glGetSynciv;
+    else if (!strcmp(n, "glDeleteSync")) fn = (void*)stub_glDeleteSync;
+    env->ReleaseStringUTFChars(name, n);
+    if (gGlRenderer.empty() && gDevice) gGlRenderer = std::string(gDevice.name.UTF8String) + " (MetalCraft)";
+    return (jlong)fn;
 }
 
 // ---- Frame & synchronization -------------------------------------------------

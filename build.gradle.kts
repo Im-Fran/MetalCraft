@@ -10,6 +10,12 @@ java {
     toolchain.languageVersion = JavaLanguageVersion.of(21)
 }
 
+repositories {
+    maven("https://api.modrinth.com/maven") {
+        content { includeGroup("maven.modrinth") }
+    }
+}
+
 dependencies {
     minecraft("com.mojang:minecraft:${property("minecraft_version")}")
     mappings(loom.officialMojangMappings())
@@ -24,6 +30,12 @@ dependencies {
         runtimeOnly("org.lwjgl:$module:$lwjgl:natives-macos-arm64")
         include("org.lwjgl:$module:$lwjgl:natives-macos-arm64")
     }
+
+    // Sodium compat is optional: compiled against, loaded at runtime only with -Psodium.
+    val sodium = "maven.modrinth:sodium:${property("sodium_version")}"
+    modCompileOnly(sodium)
+    testRuntimeOnly(sodium) // only its shader assets are read by tests
+    if (providers.gradleProperty("sodium").isPresent) modLocalRuntime(sodium)
 
     testImplementation("org.junit.jupiter:junit-jupiter:5.13.4")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")

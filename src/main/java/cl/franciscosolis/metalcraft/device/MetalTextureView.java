@@ -13,6 +13,11 @@ public class MetalTextureView extends GpuTextureView {
         this.handle = Mtl.newTextureView(texture.handle, base, Math.max(1, Math.min(mipLevels, texture.metalMips - base)));
     }
 
+    /** The retained Metal object, for code outside the device package that encodes directly (compat shims). */
+    public long handle() {
+        return handle;
+    }
+
     @Override
     public MetalTexture texture() {
         return (MetalTexture) super.texture();

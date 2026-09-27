@@ -49,6 +49,11 @@ public final class Mtl {
     public static native void draw(int primitive, int first, int count, int instances);
     public static native void drawIndexed(int primitive, int count, boolean uint32, long indexBuffer, long indexOffset, int instances, int baseVertex);
 
+    public static native void setBytes(boolean fragment, int index, long address, int length);
+    public static native void multiDrawIndexed(int primitive, boolean uint32, long indexBuffer, long counts, long offsets, long baseVertices, int drawCount);
+    /** Address of a native OpenGL stand-in (see metalcraft.mm), or 0 for functions that aren't provided. */
+    public static native long glStubAddress(String name);
+
     public static native void present(long texture);
     public static native long fence();
     public static native boolean fenceWait(long value, long timeoutMs);
