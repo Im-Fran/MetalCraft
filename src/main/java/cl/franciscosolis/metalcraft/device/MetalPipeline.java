@@ -125,7 +125,8 @@ public class MetalPipeline implements CompiledRenderPipeline {
         }
 
         if (info.getColorLogic() != LogicOp.NONE && !loggedLogicOp) {
-            // ponytail: Metal has no logic ops; OR_REVERSE is only used for the inverted crosshair. Emulate with a blend if it looks wrong.
+            // ponytail: Metal has no logic ops and no vanilla pipeline uses one; only mods could. Emulating OR_REVERSE
+            // exactly would need programmable blending (framebuffer fetch in the fragment shader).
             MetalCraft.LOGGER.warn("Pipeline {} uses logic op {}, which Metal doesn't support; ignoring", info.getLocation(), info.getColorLogic());
             loggedLogicOp = true;
         }

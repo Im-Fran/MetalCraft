@@ -58,6 +58,7 @@ public final class Mtl {
     public static native long fence();
     public static native long completedFence();
     public static native double takeGpuSeconds();
+    public static native long gpuNanosBetween(long firstFence, long lastFence);
 
     /** Dev-only per-pass GPU timing (-Dmetalcraft.gpuProfile); see metalcraft.mm. */
     public static final boolean GPU_PROFILING = Boolean.getBoolean("metalcraft.gpuProfile");

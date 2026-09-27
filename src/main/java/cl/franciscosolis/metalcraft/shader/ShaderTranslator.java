@@ -62,6 +62,20 @@ public final class ShaderTranslator {
      * @param inputLocations   for fragment shaders: the vertex stage's {@link Result#outputs()}, so varyings match by name
      */
     public static Result translate(String name, String glsl, Stage stage, Map<String, Integer> inputLocations) throws TranslationException {
+        String key = ShaderCache.key(glsl, stage, inputLocations);
+        Result cached = ShaderCache.load(key);
+        if (cached != null) return cached;
+        Result result = translateUncached(name, glsl, stage, inputLocations);
+        ShaderCache.store(key, result);
+        return result;
+    }
+
+    /** Stores translations under {@code directory} so later launches skip shaderc/SPIRV-Cross. */
+    public static void enableCache(java.nio.file.Path directory) {
+        ShaderCache.enable(directory);
+    }
+
+    private static Result translateUncached(String name, String glsl, Stage stage, Map<String, Integer> inputLocations) throws TranslationException {
         // ponytail: `sampler` is a legal GLSL identifier but a type in MSL, and SPIRV-Cross keeps the name. Extend if other clashes show up.
         ByteBuffer spirv = compileSpirv(name, gatherLooseUniforms(MSL_RESERVED.matcher(glsl).replaceAll("$1_")), stage);
         try {

@@ -240,13 +240,23 @@ public class MetalCommandEncoder implements CommandEncoder {
         return new MetalFence(Mtl.fence());
     }
 
+    private @Nullable MetalQuery activeQuery;
+
     @Override
     public GpuQuery timerQueryBegin() {
-        return MetalQuery.INSTANCE;
+        RenderSystem.assertOnRenderThread();
+        if (activeQuery != null) throw new IllegalStateException("A timer query is already active");
+        activeQuery = new MetalQuery();
+        return activeQuery;
     }
 
     @Override
-    public void timerQueryEnd(GpuQuery query) {}
+    public void timerQueryEnd(GpuQuery query) {
+        RenderSystem.assertOnRenderThread();
+        if (query != activeQuery) throw new IllegalStateException("Mismatched or duplicate GpuQuery when ending timerQuery");
+        activeQuery.end();
+        activeQuery = null;
+    }
 
     private static String describe(GpuTexture texture) {
         return texture.getLabel() + " " + texture.getWidth(0) + "x" + texture.getHeight(0);

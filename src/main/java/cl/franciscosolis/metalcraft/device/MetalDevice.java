@@ -1,6 +1,7 @@
 package cl.franciscosolis.metalcraft.device;
 
 import cl.franciscosolis.metalcraft.mtl.Mtl;
+import cl.franciscosolis.metalcraft.shader.ShaderTranslator;
 import com.mojang.blaze3d.buffers.GpuBuffer;
 import com.mojang.blaze3d.pipeline.CompiledRenderPipeline;
 import com.mojang.blaze3d.pipeline.RenderPipeline;
@@ -14,6 +15,7 @@ import com.mojang.blaze3d.textures.GpuTexture;
 import com.mojang.blaze3d.textures.GpuTextureView;
 import com.mojang.blaze3d.textures.TextureFormat;
 import java.nio.ByteBuffer;
+import net.fabricmc.loader.api.FabricLoader;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -36,6 +38,7 @@ public class MetalDevice implements GpuDevice {
     public MetalDevice(long window, ShaderSource defaultShaderSource) {
         Mtl.init(GLFWNativeCocoa.glfwGetCocoaWindow(window));
         if (Mtl.GPU_PROFILING) Mtl.setGpuProfiling(true);
+        ShaderTranslator.enableCache(FabricLoader.getInstance().getGameDir().resolve("metalcraft/shader-cache"));
         this.defaultShaderSource = defaultShaderSource;
         this.deviceName = Mtl.deviceName();
     }

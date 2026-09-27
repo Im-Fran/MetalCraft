@@ -131,7 +131,7 @@ public class MetalRenderPass implements RenderPass {
         checkOpen();
         if (!setup()) return;
         if (pipeline.info.getVertexFormatMode() == VertexFormat.Mode.TRIANGLE_FAN) {
-            drawFan(i -> i, first, count, 1);
+            if (count >= 3) Mtl.drawIndexed(Mtl.PRIMITIVE_TRIANGLE, (count - 2) * 3, true, sequentialFanIndices(count), 0, 1, first);
         } else {
             Mtl.draw(pipeline.primitive, first, count, 1);
         }
@@ -148,8 +148,32 @@ public class MetalRenderPass implements RenderPass {
         Mtl.drawIndexed(pipeline.primitive, count, type == VertexFormat.IndexType.INT, ((MetalBuffer) ib).handle, (long) firstIndex * type.bytes, instances, baseVertex);
     }
 
+    private static long fanIndices;
+    private static int fanCapacity;
+
+    /**
+     * Triangle-list indices for a fan of {@code count} consecutive vertices. The list for n vertices is a prefix of the
+     * list for any larger n, so one shared buffer, grown on demand, serves every size (the sky draws fans each frame).
+     */
+    private static long sequentialFanIndices(int count) {
+        if (count > fanCapacity) {
+            int capacity = Math.max(count, 64);
+            long buffer = Mtl.newBuffer((capacity - 2) * 12L);
+            long p = Mtl.bufferContents(buffer);
+            for (int i = 0; i < capacity - 2; i++) {
+                MemoryUtil.memPutInt(p + i * 12L, 0);
+                MemoryUtil.memPutInt(p + i * 12L + 4, i + 1);
+                MemoryUtil.memPutInt(p + i * 12L + 8, i + 2);
+            }
+            Mtl.release(fanIndices);  // Draws already recorded keep the old buffer alive.
+            fanIndices = buffer;
+            fanCapacity = capacity;
+        }
+        return fanIndices;
+    }
+
     /** Metal has no triangle fans: expand (v0, vi, vi+1) into a triangle list. */
-    // ponytail: CPU expansion into a throwaway buffer; fans are only the sky disc and debug shapes. Cache it if the sky shows up in profiles.
+    // ponytail: indexed fans only come from debug renderers, so they're expanded on the CPU into a throwaway buffer.
     private void drawFan(java.util.function.IntUnaryOperator index, int baseVertex, int count, int instances) {
         if (count < 3) return;
         int triangles = count - 2;

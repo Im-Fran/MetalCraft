@@ -27,6 +27,10 @@ static id<MTLSharedEvent> gEvent;
 static uint64_t gEventValue;
 static id<MTLCommandBuffer> gCmd;
 static std::atomic<double> gGpuSeconds{0};  // GPU execution time of completed command buffers, for profiling.
+// GPU time of recently completed command buffers by fence value, for Blaze3D timer queries (F3's GPU utilization).
+static const uint64_t kHistorySize = 1024;
+static struct { uint64_t fence; double seconds; } gHistory[kHistorySize];
+static std::mutex gHistoryLock;
 static const int kFramesInFlight = 3;
 static id<MTLBlitCommandEncoder> gBlit;
 static id<MTLRenderCommandEncoder> gRender;
@@ -128,12 +132,17 @@ static void commit() {
     endRender();
     endBlit();
     [cmd() encodeSignalEvent:gEvent value:++gEventValue];
+    uint64_t fenceValue = gEventValue;
     id<MTLCounterSampleBuffer> samples = gSamples;
     NSArray<NSMutableString*>* labels = gSampleLabels;
     gSamples = nil;
     gSampleLabels = nil;
     [gCmd addCompletedHandler:^(id<MTLCommandBuffer> cb) {
         gGpuSeconds.fetch_add(cb.GPUEndTime - cb.GPUStartTime);
+        {
+            std::lock_guard<std::mutex> lock(gHistoryLock);
+            gHistory[fenceValue % kHistorySize] = {fenceValue, cb.GPUEndTime - cb.GPUStartTime};
+        }
         if (!samples || !labels.count) return;
         NSData* data = [samples resolveCounterRange:NSMakeRange(0, labels.count * 2)];
         const MTLCounterResultTimestamp* t = (const MTLCounterResultTimestamp*)data.bytes;
@@ -695,6 +704,20 @@ JNIEXPORT jstring JNICALL Java_cl_franciscosolis_metalcraft_mtl_Mtl_takeGpuProfi
     for (NSString* key in gProfileSeconds) [out appendFormat:@"%@=%f\n", key, gProfileSeconds[key].doubleValue];
     [gProfileSeconds removeAllObjects];
     return env->NewStringUTF(out.UTF8String);
+}
+
+/**
+ * GPU nanoseconds spent on the command buffers with fence values in [first, last], or -1 until they've all completed.
+ * Entries older than the history window are skipped, which only happens for queries read long after the fact.
+ */
+JNIEXPORT jlong JNICALL Java_cl_franciscosolis_metalcraft_mtl_Mtl_gpuNanosBetween(JNIEnv*, jclass, jlong first, jlong last) {
+    if (gEvent.signaledValue < (uint64_t)last) return -1;
+    std::lock_guard<std::mutex> lock(gHistoryLock);
+    double seconds = 0;
+    for (uint64_t v = first; v <= (uint64_t)last; v++) {
+        if (gHistory[v % kHistorySize].fence == v) seconds += gHistory[v % kHistorySize].seconds;
+    }
+    return (jlong)(seconds * 1e9);
 }
 
 /** GPU execution time (seconds) accumulated since the last call. */
