@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "id": "metalcraft",
+  "version": "${version}",
+  "name": "MetalCraft",
+  "description": "Native Metal rendering backend for Minecraft on Apple Silicon.",
+  "authors": [
+    "Im-Fran"
+  ],
+  "license": "GPL-3.0-only",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "cl.franciscosolis.metalcraft.MetalCraft"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.19.5",
+    "minecraft": "~1.21.11",
+    "java": ">=21",
+    "fabric-api": "*"
+  },
+  "breaks": {
+    "sodium": "*"
+  },
+  "mixins": [
+    "metalcraft.mixins.json"
+  ]
+}

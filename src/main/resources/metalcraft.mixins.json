@@ -1,0 +1,13 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "cl.franciscosolis.metalcraft.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "RenderSystemMixin",
+    "WindowMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
