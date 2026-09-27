@@ -12,7 +12,9 @@ public class MetalCraft implements ClientModInitializer {
     private static void logGpuProfile(double frames) {
         StringBuilder sb = new StringBuilder("GPU ms/frame by pass (passes/frame):");
         java.util.Map<String, Double> values = new java.util.HashMap<>();
-        Mtl.takeGpuProfile().lines().map(l -> l.split("=", 2)).forEach(e -> values.put(e[0], Double.parseDouble(e[1])));
+        // Pass names come from Minecraft and may contain '=', so split on the last one.
+        Mtl.takeGpuProfile().lines().filter(l -> l.lastIndexOf('=') > 0)
+                .forEach(l -> values.put(l.substring(0, l.lastIndexOf('=')), Double.parseDouble(l.substring(l.lastIndexOf('=') + 1))));
         values.entrySet().stream()
                 .filter(e -> !e.getKey().endsWith(" #"))
                 .sorted((a, b) -> Double.compare(b.getValue(), a.getValue()))
