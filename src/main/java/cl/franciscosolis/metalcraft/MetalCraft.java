@@ -25,7 +25,13 @@ public class MetalCraft implements ClientModInitializer {
             int[] ticks = {0};
             ClientTickEvents.END_CLIENT_TICK.register(mc -> {
                 if (++ticks[0] % shotTick != 0) return;
-                LOGGER.info("[{}] fps={}", DISABLED ? "OpenGL" : "Metal", mc.getFps());
+                if (DISABLED) {
+                    LOGGER.info("[OpenGL] fps={}", mc.getFps());
+                } else {
+                    // GPU time since the last report, spread over the frames rendered meanwhile.
+                    double gpuMs = Mtl.takeGpuSeconds() * 1000 / Math.max(1, mc.getFps() * shotTick / 20.0);
+                    LOGGER.info("[Metal] fps={} gpuMsPerFrame={}", mc.getFps(), String.format("%.3f", gpuMs));
+                }
                 Screenshot.grab(mc.gameDirectory, mc.getMainRenderTarget(), msg -> LOGGER.info(msg.getString()));
             });
         }

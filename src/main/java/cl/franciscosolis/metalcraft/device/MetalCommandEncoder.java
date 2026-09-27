@@ -98,9 +98,13 @@ public class MetalCommandEncoder implements CommandEncoder {
         assertNoRenderPass();
         int length = data.remaining();
         if (length > slice.length()) throw new IllegalArgumentException("Cannot write more data than the slice allows (attempting to write " + length + " bytes into a slice of length " + slice.length() + ")");
+        MetalBuffer buffer = (MetalBuffer) slice.buffer();
+        // Orphaning keeps writes out of blit encoders, which would split the surrounding render passes.
+        if (buffer.tryOrphanWrite(slice.offset(), MemoryUtil.memAddress(data), length)) return;
         UploadRing.Slice staging = UploadRing.reserve(length);
         MemoryUtil.memCopy(MemoryUtil.memAddress(data), staging.address(), length);
-        Mtl.copyBuffer(staging.buffer(), staging.offset(), ((MetalBuffer) slice.buffer()).handle, slice.offset(), length);
+        Mtl.copyBuffer(staging.buffer(), staging.offset(), buffer.handle, slice.offset(), length);
+        buffer.markGpuWrite();
     }
 
     @Override
@@ -127,6 +131,7 @@ public class MetalCommandEncoder implements CommandEncoder {
         assertNoRenderPass();
         if (src.length() != dst.length()) throw new IllegalArgumentException("Cannot copy from slice of size " + src.length() + " to slice of size " + dst.length() + ", they must be equal");
         Mtl.copyBuffer(((MetalBuffer) src.buffer()).handle, src.offset(), ((MetalBuffer) dst.buffer()).handle, dst.offset(), src.length());
+        ((MetalBuffer) dst.buffer()).markGpuWrite();
     }
 
     @Override
@@ -204,6 +209,7 @@ public class MetalCommandEncoder implements CommandEncoder {
         }
         if (texture.isClosed()) throw new IllegalStateException("Source texture is closed");
         if (buffer.isClosed()) throw new IllegalStateException("Destination buffer is closed");
+        ((MetalBuffer) buffer).markGpuWrite();
         if (mip < ((MetalTexture) texture).metalMips) Mtl.copyTextureToBuffer(handle(texture), mip, x, y, w, h, ((MetalBuffer) buffer).handle, offset, w * texture.getFormat().pixelSize());
         RenderSystem.queueFencedTask(callback);
     }

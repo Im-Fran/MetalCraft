@@ -5,6 +5,7 @@
 #import <Cocoa/Cocoa.h>
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
+#include <atomic>
 #include <mutex>
 #include <string>
 #include "cl_franciscosolis_metalcraft_mtl_Mtl.h"
@@ -25,6 +26,7 @@ static bool gFetchingDrawable;
 static id<MTLSharedEvent> gEvent;
 static uint64_t gEventValue;
 static id<MTLCommandBuffer> gCmd;
+static std::atomic<double> gGpuSeconds{0};  // GPU execution time of completed command buffers, for profiling.
 static const int kFramesInFlight = 3;
 static id<MTLBlitCommandEncoder> gBlit;
 static id<MTLRenderCommandEncoder> gRender;
@@ -86,6 +88,9 @@ static void commit() {
     endRender();
     endBlit();
     [cmd() encodeSignalEvent:gEvent value:++gEventValue];
+    [gCmd addCompletedHandler:^(id<MTLCommandBuffer> cb) {
+        gGpuSeconds.fetch_add(cb.GPUEndTime - cb.GPUStartTime);
+    }];
     [gCmd commit];
     gCmd = nil;
 }
@@ -599,6 +604,11 @@ JNIEXPORT void JNICALL Java_cl_franciscosolis_metalcraft_mtl_Mtl_present(JNIEnv*
  */
 JNIEXPORT jlong JNICALL Java_cl_franciscosolis_metalcraft_mtl_Mtl_fence(JNIEnv*, jclass) {
     return (jlong)(gEventValue + 1);
+}
+
+/** GPU execution time (seconds) accumulated since the last call. */
+JNIEXPORT jdouble JNICALL Java_cl_franciscosolis_metalcraft_mtl_Mtl_takeGpuSeconds(JNIEnv*, jclass) {
+    return gGpuSeconds.exchange(0);
 }
 
 /** Highest fence value the GPU has finished; never submits. */
