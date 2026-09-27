@@ -313,7 +313,7 @@ public final class SodiumMetal {
     public static void beginPass(RenderTarget target, RenderPipeline renderPipeline) {
         GpuTextureView color = target.getColorTextureView();
         GpuTextureView depth = target.getDepthTextureView();
-        pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(() -> "Sodium terrain", color, OptionalInt.empty(), depth, OptionalDouble.empty());
+        pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(() -> "Sodium terrain " + renderPipeline.getLocation().getPath(), color, OptionalInt.empty(), depth, OptionalDouble.empty());
         pipeline = renderPipeline;
         colorFormat = color.texture().getFormat().ordinal();
         depthFormat = depth != null ? depth.texture().getFormat().ordinal() : -1;

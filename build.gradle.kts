@@ -89,5 +89,7 @@ loom {
         providers.gradleProperty("autoScreenshot").orNull?.let { property("metalcraft.autoScreenshot", it) }
         // ./gradlew runClient -PopenGL runs vanilla OpenGL with the same build, for A/B comparisons.
         if (providers.gradleProperty("openGL").isPresent) property("metalcraft.disable", "true")
+        // ./gradlew runClient -PgpuProfile -PautoScreenshot=N logs GPU time per render pass.
+        if (providers.gradleProperty("gpuProfile").isPresent) property("metalcraft.gpuProfile", "true")
     }
 }

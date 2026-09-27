@@ -54,6 +54,7 @@ public class MetalCommandEncoder implements CommandEncoder {
         if ((color.texture().usage() & GpuTexture.USAGE_RENDER_ATTACHMENT) == 0) throw new IllegalStateException("Color texture must have USAGE_RENDER_ATTACHMENT");
         if (depth != null && depth.isClosed()) throw new IllegalStateException("Depth texture is closed");
         int c = clearColor.orElse(0);
+        if (Mtl.GPU_PROFILING) Mtl.setPassLabel(label.get());
         Mtl.beginPass(((MetalTextureView) color).handle, clearColor.isPresent(), ARGB.redFloat(c), ARGB.greenFloat(c), ARGB.blueFloat(c), ARGB.alphaFloat(c),
                 depth != null ? ((MetalTextureView) depth).handle : 0, depth != null && clearDepth.isPresent(), clearDepth.orElse(1.0));
         inRenderPass = true;
@@ -67,6 +68,7 @@ public class MetalCommandEncoder implements CommandEncoder {
 
     @Override
     public void clearColorTexture(GpuTexture texture, int color) {
+        if (Mtl.GPU_PROFILING) Mtl.setPassLabel("Clear " + describe(texture));
         assertNoRenderPass();
         Mtl.beginPass(handle(texture), true, ARGB.redFloat(color), ARGB.greenFloat(color), ARGB.blueFloat(color), ARGB.alphaFloat(color), 0, false, 0);
         Mtl.endPass();
@@ -74,6 +76,7 @@ public class MetalCommandEncoder implements CommandEncoder {
 
     @Override
     public void clearColorAndDepthTextures(GpuTexture color, int c, GpuTexture depth, double depthValue) {
+        if (Mtl.GPU_PROFILING) Mtl.setPassLabel("Clear " + describe(color) + " + depth");
         assertNoRenderPass();
         Mtl.beginPass(handle(color), true, ARGB.redFloat(c), ARGB.greenFloat(c), ARGB.blueFloat(c), ARGB.alphaFloat(c), handle(depth), true, depthValue);
         Mtl.endPass();
@@ -81,6 +84,7 @@ public class MetalCommandEncoder implements CommandEncoder {
 
     @Override
     public void clearColorAndDepthTextures(GpuTexture color, int c, GpuTexture depth, double depthValue, int x, int y, int w, int h) {
+        if (Mtl.GPU_PROFILING) Mtl.setPassLabel("Clear region " + describe(color));
         assertNoRenderPass();
         Mtl.clearRegion(handle(color), color.getFormat().ordinal(), handle(depth), ARGB.redFloat(c), ARGB.greenFloat(c), ARGB.blueFloat(c), ARGB.alphaFloat(c),
                 (float) depthValue, x, y, w, h);
@@ -88,6 +92,7 @@ public class MetalCommandEncoder implements CommandEncoder {
 
     @Override
     public void clearDepthTexture(GpuTexture depth, double depthValue) {
+        if (Mtl.GPU_PROFILING) Mtl.setPassLabel("Clear depth " + describe(depth));
         assertNoRenderPass();
         Mtl.beginPass(0, false, 0, 0, 0, 0, handle(depth), true, depthValue);
         Mtl.endPass();
@@ -242,6 +247,10 @@ public class MetalCommandEncoder implements CommandEncoder {
 
     @Override
     public void timerQueryEnd(GpuQuery query) {}
+
+    private static String describe(GpuTexture texture) {
+        return texture.getLabel() + " " + texture.getWidth(0) + "x" + texture.getHeight(0);
+    }
 
     private static long handle(GpuTexture texture) {
         return ((MetalTexture) texture).handle;

@@ -58,5 +58,11 @@ public final class Mtl {
     public static native long fence();
     public static native long completedFence();
     public static native double takeGpuSeconds();
+
+    /** Dev-only per-pass GPU timing (-Dmetalcraft.gpuProfile); see metalcraft.mm. */
+    public static final boolean GPU_PROFILING = Boolean.getBoolean("metalcraft.gpuProfile");
+    public static native void setGpuProfiling(boolean enabled);
+    public static native void setPassLabel(String label);
+    public static native String takeGpuProfile();
     public static native boolean fenceWait(long value, long timeoutMs);
 }

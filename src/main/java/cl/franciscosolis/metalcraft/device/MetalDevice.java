@@ -35,6 +35,7 @@ public class MetalDevice implements GpuDevice {
 
     public MetalDevice(long window, ShaderSource defaultShaderSource) {
         Mtl.init(GLFWNativeCocoa.glfwGetCocoaWindow(window));
+        if (Mtl.GPU_PROFILING) Mtl.setGpuProfiling(true);
         this.defaultShaderSource = defaultShaderSource;
         this.deviceName = Mtl.deviceName();
     }

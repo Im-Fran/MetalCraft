@@ -73,6 +73,46 @@ static void endBlit() {
 static bool gInPass;
 static id<MTLTexture> gPassColor, gPassDepth;
 
+// Dev-only GPU profiling: every render encoder records GPU timestamps at the start of its vertex stage and the end of
+// its fragment stage (stage-boundary counters), labelled with the Blaze3D pass name(s) it contains. Results are
+// resolved when the command buffer completes and accumulated per label.
+static bool gProfile;
+static NSString* gNextLabel;
+static std::mutex gProfileLock;
+static NSMutableDictionary<NSString*, NSNumber*>* gProfileSeconds;
+static id<MTLCounterSet> gTimestampSet;
+static id<MTLCounterSampleBuffer> gSamples;      // For the command buffer being recorded.
+static NSMutableArray<NSMutableString*>* gSampleLabels;
+static const NSUInteger kMaxProfiledEncoders = 1024;
+
+/** Attaches timestamp sampling to a render pass descriptor; returns false when this frame's sample budget is used up. */
+static void profilePass(MTLRenderPassDescriptor* d, NSString* label) {
+    if (!gProfile || !gTimestampSet) return;
+    if (!gSamples) {
+        MTLCounterSampleBufferDescriptor* sd = [MTLCounterSampleBufferDescriptor new];
+        sd.counterSet = gTimestampSet;
+        sd.sampleCount = kMaxProfiledEncoders * 2;
+        sd.storageMode = MTLStorageModeShared;
+        gSamples = [gDevice newCounterSampleBufferWithDescriptor:sd error:nil];
+        gSampleLabels = [NSMutableArray new];
+    }
+    NSUInteger k = gSampleLabels.count;
+    if (!gSamples || k >= kMaxProfiledEncoders) return;
+    d.sampleBufferAttachments[0].sampleBuffer = gSamples;
+    d.sampleBufferAttachments[0].startOfVertexSampleIndex = 2 * k;
+    d.sampleBufferAttachments[0].endOfVertexSampleIndex = MTLCounterDontSample;
+    d.sampleBufferAttachments[0].startOfFragmentSampleIndex = MTLCounterDontSample;
+    d.sampleBufferAttachments[0].endOfFragmentSampleIndex = 2 * k + 1;
+    [gSampleLabels addObject:[NSMutableString stringWithString:label ?: @"(unlabelled)"]];
+}
+
+/** A merged pass adds its name to the encoder's label. */
+static void profileMerge(NSString* label) {
+    if (!gProfile || !gSampleLabels.count || !label) return;
+    NSMutableString* current = gSampleLabels.lastObject;
+    if (![current containsString:label]) [current appendFormat:@" + %@", label];
+}
+
 static void endRender() {
     if (gRender) { [gRender endEncoding]; gRender = nil; }
     gPassColor = gPassDepth = nil;
@@ -88,8 +128,30 @@ static void commit() {
     endRender();
     endBlit();
     [cmd() encodeSignalEvent:gEvent value:++gEventValue];
+    id<MTLCounterSampleBuffer> samples = gSamples;
+    NSArray<NSMutableString*>* labels = gSampleLabels;
+    gSamples = nil;
+    gSampleLabels = nil;
     [gCmd addCompletedHandler:^(id<MTLCommandBuffer> cb) {
         gGpuSeconds.fetch_add(cb.GPUEndTime - cb.GPUStartTime);
+        if (!samples || !labels.count) return;
+        NSData* data = [samples resolveCounterRange:NSMakeRange(0, labels.count * 2)];
+        const MTLCounterResultTimestamp* t = (const MTLCounterResultTimestamp*)data.bytes;
+        std::lock_guard<std::mutex> lock(gProfileLock);
+        // Encoders overlap (the next vertex stage starts while the previous fragments drain), so each encoder is
+        // charged only the time it extends the timeline by: its end minus max(its start, the previous end).
+        uint64_t previousEnd = 0;
+        for (NSUInteger k = 0; k < labels.count; k++) {
+            uint64_t start = t[2 * k].timestamp, end = t[2 * k + 1].timestamp;
+            if (start == MTLCounterErrorValue || end == MTLCounterErrorValue || end < start) continue;
+            start = MAX(start, previousEnd);
+            if (end < start) continue;
+            previousEnd = end;
+            NSString* key = labels[k];
+            gProfileSeconds[key] = @(gProfileSeconds[key].doubleValue + (end - start) * 1e-9);  // Apple GPU timestamps are ns.
+            NSString* countKey = [key stringByAppendingString:@" #"];
+            gProfileSeconds[countKey] = @(gProfileSeconds[countKey].doubleValue + 1);
+        }
     }];
     [gCmd commit];
     gCmd = nil;
@@ -384,7 +446,10 @@ JNIEXPORT void JNICALL Java_cl_franciscosolis_metalcraft_mtl_Mtl_beginPass(JNIEn
         jlong depth, jboolean clearDepth, jdouble depthValue) {
     id<MTLTexture> colorView = OBJ(id<MTLTexture>, color), depthView = OBJ(id<MTLTexture>, depth);
     gInPass = true;
-    if (gRender && !clearColor && !clearDepth && sameAttachment(colorView, gPassColor) && sameAttachment(depthView, gPassDepth)) return;
+    if (gRender && !clearColor && !clearDepth && sameAttachment(colorView, gPassColor) && sameAttachment(depthView, gPassDepth)) {
+        profileMerge(gNextLabel);
+        return;
+    }
     endRender();
     endBlit();
     gPassColor = colorView;
@@ -403,6 +468,7 @@ JNIEXPORT void JNICALL Java_cl_franciscosolis_metalcraft_mtl_Mtl_beginPass(JNIEn
         d.depthAttachment.clearDepth = depthValue;
         d.depthAttachment.storeAction = MTLStoreActionStore;
     }
+    profilePass(d, gNextLabel);
     gRender = [cmd() renderCommandEncoderWithDescriptor:d];
     // Front faces are counter-clockwise in GL; the Y flip in the vertex stage mirrors them to clockwise.
     [gRender setFrontFacingWinding:MTLWindingClockwise];
@@ -579,6 +645,7 @@ JNIEXPORT void JNICALL Java_cl_franciscosolis_metalcraft_mtl_Mtl_present(JNIEnv*
             d.colorAttachments[0].texture = drawable.texture;
             d.colorAttachments[0].loadAction = MTLLoadActionDontCare;
             d.colorAttachments[0].storeAction = MTLStoreActionStore;
+            profilePass(d, @"Present");
             id<MTLRenderCommandEncoder> enc = [cmd() renderCommandEncoderWithDescriptor:d];
             [enc setRenderPipelineState:gPresentPipeline];
             [enc setFragmentTexture:tex atIndex:0];
@@ -604,6 +671,30 @@ JNIEXPORT void JNICALL Java_cl_franciscosolis_metalcraft_mtl_Mtl_present(JNIEnv*
  */
 JNIEXPORT jlong JNICALL Java_cl_franciscosolis_metalcraft_mtl_Mtl_fence(JNIEnv*, jclass) {
     return (jlong)(gEventValue + 1);
+}
+
+JNIEXPORT void JNICALL Java_cl_franciscosolis_metalcraft_mtl_Mtl_setGpuProfiling(JNIEnv*, jclass, jboolean enabled) {
+    gProfile = enabled;
+    gProfileSeconds = [NSMutableDictionary new];
+    for (id<MTLCounterSet> set in gDevice.counterSets) {
+        if ([set.name isEqualToString:MTLCommonCounterSetTimestamp]) gTimestampSet = set;
+    }
+    if (![gDevice supportsCounterSampling:MTLCounterSamplingPointAtStageBoundary]) gTimestampSet = nil;
+}
+
+JNIEXPORT void JNICALL Java_cl_franciscosolis_metalcraft_mtl_Mtl_setPassLabel(JNIEnv* env, jclass, jstring label) {
+    const char* s = env->GetStringUTFChars(label, nullptr);
+    gNextLabel = @(s);
+    env->ReleaseStringUTFChars(label, s);
+}
+
+/** "label=seconds" lines accumulated since the last call. */
+JNIEXPORT jstring JNICALL Java_cl_franciscosolis_metalcraft_mtl_Mtl_takeGpuProfile(JNIEnv* env, jclass) {
+    std::lock_guard<std::mutex> lock(gProfileLock);
+    NSMutableString* out = [NSMutableString new];
+    for (NSString* key in gProfileSeconds) [out appendFormat:@"%@=%f\n", key, gProfileSeconds[key].doubleValue];
+    [gProfileSeconds removeAllObjects];
+    return env->NewStringUTF(out.UTF8String);
 }
 
 /** GPU execution time (seconds) accumulated since the last call. */
